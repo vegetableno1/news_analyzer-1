@@ -87,6 +87,10 @@ class MainWindow(QMainWindow):
         # 使用传入的RSS收集器或创建新的
         self.rss_collector = rss_collector or RSSCollector()
         
+        # 后台服务相关属性
+        self.refresh_in_progress = False
+        self.rss_service = None
+        
         # 设置窗口属性
         self.setWindowTitle("新闻聚合与分析系统")
         self.setMinimumSize(1200, 800)
@@ -418,24 +422,45 @@ class MainWindow(QMainWindow):
                 self.logger.error(f"添加新闻源失败: {str(e)}")
     
     def refresh_news(self, source_url=None):
-        """刷新新闻
+        """刷新新闻 - 启动后台异步更新
         
         Args:
             source_url: 可选，特定源的URL
         """
-        self.status_label.setText("正在获取新闻...")
+        if self.refresh_in_progress:
+            QMessageBox.information(self, "提示", "已有更新任务在进行中")
+            return
+            
+        self.status_label.setText("正在后台获取新闻...")
+        self.refresh_in_progress = True
         
+        # 初始化后台服务
+        from news_analyzer.services.background_service import RSSFetchService
+        self.rss_service = RSSFetchService(self.rss_collector)
+        self.rss_service.progress_signal.connect(self._update_progress)
+        self.rss_service.finished_signal.connect(self._handle_rss_results)
+        self.rss_service.error_signal.connect(self._show_error)
+        
+        # 启动服务
+        self.rss_service.start()
+        
+        # 禁用刷新按钮
+        self.refresh_action.setEnabled(False)
+        
+        self.logger.info("启动后台新闻更新任务")
+
+    def _update_progress(self, percent, message):
+        """更新进度"""
+        self.status_label.setText(f"{message} ({percent}%)")
+
+    def _handle_rss_results(self, news_items):
+        """处理RSS获取结果"""
         try:
-            if source_url:
-                # 刷新特定源
-                news_items = self.rss_collector.fetch_from_source(source_url)
-                count = len(news_items)
-                self.status_label.setText(f"已获取 {count} 条新闻")
-            else:
-                # 刷新所有源
-                news_items = self.rss_collector.fetch_all()
-                count = len(news_items)
-                self.status_label.setText(f"已获取 {count} 条新闻")
+            count = len(news_items)
+            self.status_label.setText(f"已获取 {count} 条新闻")
+            
+            # 更新RSS收集器缓存
+            self.rss_collector.news_cache = news_items
             
             # 更新新闻列表
             self.news_list.update_news(news_items)
@@ -446,11 +471,26 @@ class MainWindow(QMainWindow):
             # 保存到存储
             self.storage.save_news(news_items)
             
-            self.logger.info(f"已刷新新闻，获取了 {count} 条")
+            # 同步分类到侧边栏
+            self._sync_categories()
+            
+            self.logger.info(f"后台更新完成，获取了 {count} 条新闻")
         except Exception as e:
-            QMessageBox.warning(self, "刷新失败", f"获取新闻失败: {str(e)}")
-            self.status_label.setText("刷新失败")
-            self.logger.error(f"刷新新闻失败: {str(e)}")
+            self.logger.error(f"处理RSS结果失败: {str(e)}")
+            self._show_error(f"处理新闻数据失败: {str(e)}")
+        finally:
+            self.refresh_in_progress = False
+            self.refresh_action.setEnabled(True)
+            self.rss_service = None
+
+    def _show_error(self, error_msg):
+        """显示错误"""
+        QMessageBox.warning(self, "刷新失败", error_msg)
+        self.status_label.setText("刷新失败")
+        self.logger.error(f"后台更新失败: {error_msg}")
+        self.refresh_in_progress = False
+        self.refresh_action.setEnabled(True)
+        self.rss_service = None
     
     def search_news(self, query):
         """搜索新闻

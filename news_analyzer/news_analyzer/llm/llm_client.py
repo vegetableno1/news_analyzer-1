@@ -618,16 +618,22 @@ class LLMClient:
         Returns:
             str: 格式化的HTML
         """
-        # 增强HTML格式化
+        # 先处理内容中的换行符
+        processed_content = (
+            content.replace('\n\n', '</p><p>')
+                .replace('\n- ', '</p><li>')
+                .replace('\n', '<br>')
+        )
+        
+        # 构建HTML
         html = f'''
         <div style="font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; padding: 15px; line-height: 1.5;">
             <h2 style="color: #1976D2; border-bottom: 1px solid #E0E0E0; padding-bottom: 8px;">{analysis_type}结果</h2>
             <div style="padding: 10px 0;">
-                {content.replace('\n\n', '</p><p>').replace('\n- ', '</p><li>').replace('\n', '<br>')}
+                {processed_content}
             </div>
         </div>
         '''
-        
         return html
     
     def _mock_analysis(self, news_item, analysis_type):
